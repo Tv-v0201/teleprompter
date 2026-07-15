@@ -1,0 +1,1499 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>实时字幕提词器</title>
+<style>
+:root {
+  color: #ecf4f7;
+  background: #0b0f14;
+  font-family: Inter, 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; min-height: 100vh; background: #0b0f14; }
+button, input, select, textarea { font: inherit; }
+button { -webkit-tap-highlight-color: transparent; }
+
+/* ===== Shell ===== */
+.app-shell { position: relative; min-height: 100dvh; overflow: hidden; background: #0b0f14; }
+
+/* ===== Status Bar ===== */
+.app-statusbar {
+  position: fixed; top: 0; right: 0; left: 0; z-index: 18;
+  display: grid;
+  grid-template-columns: minmax(220px,max-content) minmax(180px,1fr) minmax(280px,max-content);
+  align-items: center; gap: 18px;
+  min-height: 64px; padding: 10px 18px;
+  border-bottom: 1px solid rgb(255 255 255 / 8%);
+  background: #0a0e13f0;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+.brand-lockup { display: flex; align-items: baseline; gap: 12px; min-width: 0; }
+.brand-lockup h1 { margin: 0; color: #f8fbff; font-size: 18px; line-height: 1.2; white-space: nowrap; }
+.brand-lockup span { color: #93a3b4; font-size: 13px; }
+.statusbar-center {
+  display: flex; align-items: center; justify-content: center; gap: 8px; min-width: 0;
+}
+.statusbar-center span { overflow: hidden; color: #dce8ef; text-overflow: ellipsis; white-space: nowrap; }
+.statusbar-center strong { color: #8fe6c1; font-size: 13px; font-weight: 700; white-space: nowrap; }
+.statusbar-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; min-width: 0; }
+
+.status-pill {
+  display: grid; min-width: 116px; gap: 2px;
+  padding: 8px 12px; border: 1px solid rgb(255 255 255 / 10%);
+  border-radius: 8px; background: #151b22; transition: all .2s;
+}
+.status-pill span { color: #9aa8b6; font-size: 12px; }
+.status-pill strong { color: #f8fbff; font-size: 19px; line-height: 1; }
+.status-pill.listening { border-color: #5bd6a46b; background: #19564170; }
+
+/* ===== Buttons ===== */
+.btn-primary, .btn-secondary, .btn-danger, .btn-icon, .btn-dock {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  min-width: 0; height: 42px; border-radius: 8px; border: none;
+  cursor: pointer; font-weight: 700; white-space: nowrap; transition: all .15s;
+}
+.btn-primary { min-width: 116px; padding: 0 18px; color: #07120f; background: #62e0b1; }
+.btn-primary:hover { background: #7cecc4; }
+.btn-primary:active { background: #4dd49e; }
+.btn-primary-large { min-width: 152px; height: 56px; font-size: 17px; }
+.btn-primary.recording { background: #e74c3c; color: #fff; animation: pulse-rec 1.5s infinite; }
+.btn-primary.scrolling { background: #27ae60; color: #fff; }
+@keyframes pulse-rec { 0%,100% { box-shadow: 0 0 0 0 rgba(231,76,60,.5); } 50% { box-shadow: 0 0 0 12px rgba(231,76,60,0); } }
+
+.btn-secondary { min-width: 112px; padding: 0 14px; color: #dfeaf1; border: 1px solid rgb(255 255 255 / 12%); background: #1b232c; }
+.btn-secondary:hover { border-color: rgb(255 255 255 / 22%); background: #252e38; }
+.btn-danger { min-width: 98px; padding: 0 12px; color: #ffd8d8; border: 1px solid rgb(248 113 113 / 28%); background: #332024; }
+.btn-danger:hover { border-color: rgb(248 113 113 / 50%); background: #3d282a; }
+.btn-icon { width: 48px; color: #dfeaf1; border: 1px solid rgb(255 255 255 / 10%); background: #222a34; }
+.btn-icon:hover { border-color: rgb(255 255 255 / 20%); }
+.btn-dock { min-width: 96px; padding: 0 14px; color: #dfeaf1; border: 1px solid rgb(255 255 255 / 10%); background: #222a34; }
+.btn-dock:hover { border-color: rgb(255 255 255 / 20%); }
+
+.btn-primary:disabled, .btn-secondary:disabled { cursor: not-allowed; opacity: .5; }
+
+/* ===== Notice ===== */
+.notice {
+  position: fixed; top: 74px; left: 50%; z-index: 21;
+  max-width: min(760px, calc(100vw - 32px));
+  padding: 9px 14px; transform: translateX(-50%);
+  border: 1px solid rgb(255 255 255 / 10%); border-radius: 8px;
+  color: #d7e3ea; background: #12181fe5;
+  font-size: 13px; line-height: 1.5;
+  box-shadow: 0 18px 46px #00000038;
+  display: none;
+}
+.notice.visible { display: block; }
+.notice a { display: inline-flex; align-items: center; min-height: 28px; margin-left: 10px; padding: 0 10px; border: 1px solid rgb(143 230 193 / 42%); border-radius: 6px; color: #8fe6c1; background: #1956414d; font-weight: 700; text-decoration: none; }
+
+/* ===== Script Drawer (left sidebar) ===== */
+.script-drawer {
+  position: fixed; top: 82px; left: 16px; z-index: 16;
+  width: min(278px, calc(100vw - 32px));
+  border: 1px solid rgb(255 255 255 / 10%); border-radius: 8px;
+  background: #12181ff0; box-shadow: 0 22px 60px #00000047;
+  transition: all .2s;
+}
+.script-drawer.open {
+  bottom: 120px;
+  width: min(440px, calc(100vw - 32px));
+  background: #f5f7fa; color: #172231;
+}
+.script-drawer-summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px; }
+.script-drawer-summary > div { display: grid; gap: 3px; min-width: 0; }
+.script-drawer-summary strong { overflow: hidden; color: #f8fbff; font-size: 15px; text-overflow: ellipsis; white-space: nowrap; }
+.script-drawer.open .script-drawer-summary { border-bottom: 1px solid #d8e1ea; }
+.script-drawer.open .script-drawer-summary span, .script-drawer.open .script-drawer-summary small { color: #647386; }
+.script-drawer.open .script-drawer-summary strong { color: #172231; }
+.drawer-toggle { min-width: 92px; }
+.script-drawer-body { display: none; grid-template-rows: minmax(0,1fr) auto; gap: 12px; height: calc(100% - 69px); min-height: 0; padding: 12px; }
+.script-drawer.open .script-drawer-body { display: grid; }
+
+/* ===== Library & Editor ===== */
+.script-library {
+  display: grid; grid-template-columns: 1fr auto; align-items: end; gap: 10px;
+  border: 1px solid #d5dde4; border-radius: 8px; background: #fff; padding: 12px;
+}
+.library-field { display: grid; gap: 6px; min-width: 0; color: #4e5c69; font-size: 13px; }
+.library-field input, .library-field select {
+  width: 100%; height: 38px; min-width: 0;
+  border: 1px solid #cbd5df; border-radius: 6px;
+  padding: 0 10px; background: #fff; color: #172534;
+}
+.script-library .btn-secondary, .script-library .btn-danger {
+  height: 38px; color: #19334d; border-color: #b8c7d6; background: #f7fafc;
+}
+.script-library .btn-danger { color: #8a1f1f; border-color: #efb8b8; background: #fff5f5; }
+.editor-pane { display: grid; grid-template-rows: auto minmax(0,1fr); min-height: 0; }
+.editor-pane h2 { margin: 0 0 10px; color: #172231; font-size: 17px; }
+.editor-pane textarea {
+  display: block; width: 100%; min-height: 0; resize: none;
+  padding: 16px; border: 1px solid #cbd5df; border-radius: 8px;
+  outline: none; background: #fff; color: #172534; line-height: 1.8;
+}
+.editor-pane textarea:focus { border-color: #2f8fdf; box-shadow: 0 0 0 3px #2f8fdf1f; }
+
+/* ===== Performance Workspace ===== */
+.performance-workspace {
+  position: fixed; top: 64px; right: 0; bottom: 104px; left: 0;
+  display: block; min-width: 0;
+}
+.reader-pane { position: relative; width: 100%; height: 100%; min-height: 0; background: #0b0f14; }
+.reader-frame {
+  width: 100%; height: 100%; overflow-y: auto;
+  padding: 26vh max(56px,6vw) 34vh;
+  background: #0b0f14; scroll-behavior: smooth;
+}
+.reader-frame p {
+  max-width: 1160px; margin: 0 auto 34px;
+  color: #ffffff;
+  font-size: var(--reader-font-size, 44px);
+  font-weight: 650; line-height: 1.45;
+  overflow-wrap: anywhere;
+  transition: color .16s ease, background .16s ease, transform .16s ease;
+}
+.reader-frame p.is-current {
+  color: #ffd700;
+  background: rgba(255, 215, 0, 0.12);
+  border-radius: 8px;
+  padding: 6px 14px;
+  margin: 0 auto 28px;
+  transform: translateX(6px);
+  box-shadow: 0 0 32px rgba(255, 215, 0, 0.10);
+}
+.reader-frame p.is-read {
+  color: #555555;
+}
+.reader-frame p.is-skippable {
+  color: #555555; text-decoration: line-through;
+  text-decoration-thickness: .06em; text-decoration-color: #666;
+}
+.reader-frame p.is-current .is-skippable { color: #ffd700; }
+.reader-frame p.reader-segment-selectable { cursor: pointer; }
+.empty-reader { color: #7f8b97; }
+.btn-skip {
+  display: inline-block; margin-top: 4px; padding: 4px 12px;
+  border: 1px solid rgb(255 255 255 / 12%); border-radius: 4px;
+  background: transparent; color: #93a3b4; font-size: 12px; cursor: pointer;
+}
+.btn-skip:hover { border-color: #62e0b1; color: #62e0b1; }
+
+/* ===== Control Dock ===== */
+.control-dock {
+  position: fixed; right: 16px; bottom: max(16px, env(safe-area-inset-bottom)); left: 16px; z-index: 18;
+  display: grid;
+  grid-template-columns: minmax(190px,max-content) minmax(380px,max-content);
+  align-items: center; justify-content: center; gap: 12px;
+  max-width: 780px; margin: 0 auto;
+  padding: 12px; border: 1px solid rgb(255 255 255 / 10%);
+  border-radius: 8px; background: #141a21f0; box-shadow: 0 24px 68px #00000052;
+}
+.dock-group { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.dock-group-primary { justify-content: center; }
+.control-field { display: flex; align-items: center; gap: 8px; min-height: 42px; color: #b8c5d1; font-size: 13px; white-space: nowrap; }
+.control-field select {
+  min-width: 112px; height: 36px;
+  border: 1px solid rgb(255 255 255 / 13%); border-radius: 6px;
+  padding: 0 8px; background: #101720; color: #edf5f8;
+}
+.control-field input[type=range] { width: clamp(76px,8vw,104px); accent-color: #62e0b1; }
+.control-field output { min-width: 42px; color: #edf5f8; font-variant-numeric: tabular-nums; }
+
+/* ===== Settings Popover ===== */
+.settings-popover {
+  position: absolute; right: 12px; bottom: calc(100% + 12px); left: 12px;
+  display: none; grid-template-columns: repeat(2, minmax(220px,1fr)); gap: 10px 14px;
+  max-height: min(68vh,520px); padding: 14px; overflow-y: auto;
+  border: 1px solid rgb(255 255 255 / 12%); border-radius: 8px;
+  background: #141a21fa; box-shadow: 0 22px 68px #00000057;
+}
+.settings-popover.visible { display: grid; }
+.settings-popover h2 { grid-column: 1/-1; margin: 0; color: #f8fbff; font-size: 15px; }
+.settings-popover .control-field { justify-content: space-between; min-width: 0; }
+.settings-popover .control-field select { min-width: 128px; }
+.settings-popover .control-field input[type=range] { width: min(160px,34vw); }
+
+/* ===== Debug Panel ===== */
+.debug-panel {
+  position: fixed; top: 82px; right: 16px; bottom: 124px; z-index: 20;
+  width: min(720px, calc(100vw - 32px)); display: none;
+  border: 1px solid #d5dde4; border-radius: 8px; background: #fff;
+  padding: 12px; overflow-y: auto; color: #172534;
+  box-shadow: 0 24px 70px #00000057;
+}
+.debug-panel.visible { display: block; }
+.debug-grid { display: grid; grid-template-columns: repeat(4, minmax(120px,1fr)); gap: 10px; margin-bottom: 10px; }
+.debug-grid dt { margin-bottom: 4px; color: #66717f; font-size: 12px; }
+.debug-grid dd { min-height: 24px; margin: 0; overflow: hidden; color: #172534; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
+.debug-log { border-top: 1px solid #e2e8ef; padding-top: 10px; }
+.debug-log h3 { margin: 0 0 8px; color: #172534; font-size: 14px; }
+.debug-log ol { display: grid; gap: 6px; max-height: 180px; margin: 0; padding: 0; overflow-y: auto; list-style: none; }
+.debug-log li { display: grid; grid-template-columns: minmax(104px,max-content) minmax(72px,max-content) minmax(0,1fr); align-items: baseline; gap: 8px; min-width: 0; padding: 8px; border-radius: 6px; background: #f7fafc; }
+.debug-log li strong { color: #172534; font-size: 12px; }
+.debug-log li span { color: #66717f; font-size: 12px; font-variant-numeric: tabular-nums; }
+.debug-log li em { color: #8a1f1f; font-style: normal; font-size: 12px; }
+.debug-log p { grid-column: 1/-1; margin: 0; overflow: hidden; color: #344456; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ===== Fullscreen (CSS fallback) ===== */
+.app-shell.fake-fullscreen { padding: 0; background: #0b0f14; }
+.app-shell.fake-fullscreen .app-statusbar,
+.app-shell.fake-fullscreen .control-dock,
+.app-shell.fake-fullscreen .notice,
+.app-shell.fake-fullscreen .script-drawer,
+.app-shell.fake-fullscreen .debug-panel { display: none; }
+.app-shell.fake-fullscreen .performance-workspace { position: static; inset: auto; height: 100dvh; }
+.app-shell.fake-fullscreen .reader-pane { position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 20; min-height: 100dvh; }
+.app-shell.fake-fullscreen .reader-frame {
+  width: 100vw; height: 100dvh;
+  padding: max(45vh,env(safe-area-inset-top)) max(64px,env(safe-area-inset-right)) max(42vh,env(safe-area-inset-bottom)) max(64px,env(safe-area-inset-left));
+}
+.app-shell.fake-fullscreen .reader-frame p { width: 100%; max-width: none; margin-right: 0; margin-left: 0; }
+
+.fullscreen-exit-btn {
+  position: fixed; top: max(18px, env(safe-area-inset-top)); right: max(18px, env(safe-area-inset-right)); z-index: 30;
+  display: none; align-items: center; justify-content: center; gap: 8px;
+  height: 44px; padding: 0 16px;
+  border: 1px solid rgb(255 255 255 / 18%); border-radius: 8px;
+  color: #f8fbff; background: #151b20d1; box-shadow: 0 10px 30px #0000003d;
+  cursor: pointer; font-weight: 600; font-size: 14px;
+}
+.app-shell.fake-fullscreen .fullscreen-exit-btn { display: inline-flex; }
+
+/* ===== Mic Test Overlay ===== */
+.mic-test-overlay {
+  position: fixed; inset: 0; z-index: 200;
+  display: none; align-items: center; justify-content: center;
+  background: rgba(0,0,0,.82);
+}
+.mic-test-overlay.visible { display: flex; }
+.mic-test-dialog {
+  background: #1e1e30; border: 1px solid #444; border-radius: 16px;
+  padding: 24px; width: 90%; max-width: 500px; display: flex; flex-direction: column; gap: 16px;
+}
+.mic-test-dialog h3 { margin: 0; color: #62e0b1; font-size: 18px; }
+.volume-meter-outer { width: 100%; height: 12px; background: #222; border-radius: 6px; overflow: hidden; }
+.volume-meter-inner { height: 100%; width: 0%; background: linear-gradient(90deg, #27ae60, #ffd700, #e74c3c); border-radius: 6px; transition: width .08s linear; }
+.volume-peak { font-size: 12px; color: #888; text-align: center; }
+.mic-test-buttons { display: flex; gap: 10px; align-items: center; }
+.mic-test-status { font-size: 13px; color: #aaa; }
+audio { width: 100%; height: 36px; margin-top: 8px; display: none; }
+audio.visible { display: block; }
+
+/* ===== Responsive ===== */
+@media (max-width: 1180px) {
+  .app-statusbar { grid-template-columns: minmax(180px,max-content) 1fr; }
+  .statusbar-center { display: none; }
+  .control-dock { grid-template-columns: minmax(0,1fr); }
+  .dock-group { justify-content: center; }
+  .reader-frame { padding-right: 40px; padding-left: 40px; }
+  .debug-panel { bottom: 220px; }
+  .debug-grid { grid-template-columns: repeat(2, minmax(120px,1fr)); }
+}
+@media (max-width: 720px) {
+  .app-statusbar { grid-template-columns: 1fr auto; min-height: 58px; padding: 8px 10px; }
+  .brand-lockup { display: grid; gap: 2px; }
+  .brand-lockup h1 { font-size: 16px; }
+  .status-pill { min-width: 82px; padding: 7px 9px; }
+  .performance-workspace { top: 58px; right: 0; bottom: 178px; left: 0; }
+  .reader-frame { padding: 22vh 22px 30vh; }
+  .reader-frame p { margin-bottom: 28px; font-size: clamp(30px, var(--reader-font-size), 56px); }
+  .control-dock { right: 10px; bottom: max(10px,env(safe-area-inset-bottom)); left: 10px; gap: 8px; padding: 10px; }
+  .dock-group { gap: 8px; }
+  .btn-dock { min-width: 0; flex: 1; }
+  .btn-primary-large { flex: 1; min-width: 132px; }
+  .settings-popover { right: 0; bottom: calc(100% + 10px); left: 0; max-height: min(58vh,440px); padding: 12px; grid-template-columns: 1fr; }
+  .settings-popover .control-field input[type=range] { width: min(136px,38vw); }
+  .debug-panel { top: 72px; right: 10px; bottom: 190px; width: calc(100vw - 20px); }
+  .script-drawer { top: 72px; left: 10px; width: calc(100vw - 20px); }
+}
+</style>
+</head>
+<body>
+
+<div class="app-shell" id="appShell">
+  <!-- Status Bar -->
+  <div class="app-statusbar">
+    <div class="brand-lockup">
+      <h1>实时字幕提词器</h1>
+      <span>v2.0</span>
+    </div>
+    <div class="statusbar-center">
+      <span id="modeLabel">语音跟读</span>
+      <strong id="scrollModeTag">· 跟随</strong>
+    </div>
+    <div class="statusbar-actions">
+      <div class="status-pill" id="statusPill">
+        <span id="statusLabel">就绪</span>
+        <strong id="statusValue">—</strong>
+      </div>
+      <button class="btn-secondary diagnostic-toggle" id="debugToggle" title="切换调试面板">调试</button>
+      <button class="btn-icon fullscreen-btn" id="fullscreenBtn" title="全屏">⛶</button>
+    </div>
+  </div>
+
+  <!-- Notice -->
+  <div class="notice" id="noticeBar"></div>
+
+  <!-- Script Drawer -->
+  <div class="script-drawer" id="scriptDrawer">
+    <div class="script-drawer-summary">
+      <div>
+        <strong id="drawerTitle">默认稿件</strong>
+        <span id="drawerSegmentCount">0 段</span>
+        <small id="drawerCharCount">0 字</small>
+      </div>
+      <button class="btn-secondary drawer-toggle" id="drawerToggle">编辑稿件</button>
+    </div>
+    <div class="script-drawer-body">
+      <div class="editor-pane">
+        <h2>编辑提词文本</h2>
+        <textarea id="editorTextarea" placeholder="在此粘贴或编辑提词文本...&#10;每段（用空行分隔）会显示为一个段落。&#10;可以在段落内使用 | 标记可跳过文本。"></textarea>
+      </div>
+      <div class="script-library">
+        <div class="library-field">
+          <span>加载稿件</span>
+          <select id="librarySelect"><option value="">— 已保存的稿件 —</option></select>
+        </div>
+        <button class="btn-secondary" id="btnLibrarySave">保存</button>
+        <button class="btn-danger" id="btnLibraryDelete">删除</button>
+        <button class="btn-secondary" id="btnApplyEditor">应用</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Performance Workspace -->
+  <div class="performance-workspace">
+    <div class="reader-pane" id="readerPane">
+      <div class="reader-frame" id="readerFrame" style="--reader-font-size:44px;">
+        <p class="empty-reader" id="emptyMsg">未加载文本。点击左下角"编辑稿件"开始。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Control Dock -->
+  <div class="control-dock">
+    <div class="dock-group dock-group-primary">
+      <button class="btn-primary btn-primary-large" id="btnAction" onclick="toggleAction()">开始麦克风</button>
+      <button class="btn-secondary" id="btnReset" onclick="resetProgress()">重置</button>
+    </div>
+    <div class="dock-group" style="position:relative;">
+      <button class="btn-dock" id="btnPrev" onclick="prevSegment()">◀ 前段</button>
+      <button class="btn-dock" id="btnNext" onclick="nextSegment()">后段 ▶</button>
+      <button class="btn-dock settings-toggle" id="settingsToggle" onclick="toggleSettings()">⚙ 设置</button>
+      <button class="btn-icon" id="btnMicTest" onclick="toggleMicTestUI()">🎤</button>
+
+      <!-- Settings Popover -->
+      <div class="settings-popover" id="settingsPopover">
+        <h2>显示设置</h2>
+        <div class="control-field">
+          <label>滚动模式</label>
+          <select id="scrollModeSelect" onchange="onScrollModeChange()">
+            <option value="voice">语音跟读</option>
+            <option value="fixed">固定速度</option>
+          </select>
+        </div>
+        <div class="control-field">
+          <label>字号</label>
+          <input type="range" id="fontSizeSlider" min="20" max="80" value="44" oninput="onFontSizeChange()">
+          <output id="fontSizeOutput">44</output>
+        </div>
+        <div class="control-field">
+          <label>灵敏度</label>
+          <input type="range" id="sensitivitySlider" min="10" max="90" value="55" oninput="onSensitivityChange()">
+          <output id="sensitivityOutput">0.55</output>
+        </div>
+        <div class="control-field" id="leadCharsField">
+          <label>前导字符</label>
+          <input type="range" id="leadCharsSlider" min="0" max="60" value="0" oninput="onLeadCharsChange()">
+          <output id="leadCharsOutput">0</output>
+        </div>
+        <div class="control-field" id="speedField" style="display:none;">
+          <label>滚动速度</label>
+          <select id="speedSelect" onchange="onSpeedChange()">
+            <option value="15">慢 (15 px/s)</option>
+            <option value="30" selected>中 (30 px/s)</option>
+            <option value="55">快 (55 px/s)</option>
+          </select>
+        </div>
+        <div class="control-field">
+          <label>聚焦位置</label>
+          <input type="range" id="focusRatioSlider" min="20" max="60" value="38" oninput="onFocusRatioChange()">
+          <output id="focusRatioOutput">38%</output>
+        </div>
+        <div class="control-field">
+          <label>滚动目标</label>
+          <select id="scrollTargetSelect" onchange="onScrollTargetChange()">
+            <option value="lead">前导字符</option>
+            <option value="handoff">交接模式</option>
+          </select>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Fullscreen Exit -->
+  <button class="fullscreen-exit-btn" id="fullscreenExitBtn" onclick="toggleFullscreen()">⛶ 退出全屏</button>
+
+  <!-- Debug Panel -->
+  <div class="debug-panel" id="debugPanel">
+    <div class="debug-grid">
+      <div><dt>当前段</dt><dd id="dbCurrentSeg">—</dd></div>
+      <div><dt>字符位置</dt><dd id="dbCharIndex">0</dd></div>
+      <div><dt>匹配状态</dt><dd id="dbMatchState">—</dd></div>
+      <div><dt>匹配分数</dt><dd id="dbMatchScore">—</dd></div>
+      <div><dt>识别文本</dt><dd id="dbTranscript">—</dd></div>
+      <div><dt>最终文本</dt><dd id="dbCommitted">—</dd></div>
+      <div><dt>总段数</dt><dd id="dbSegCount">0</dd></div>
+      <div><dt>识别状态</dt><dd id="dbRecState">—</dd></div>
+    </div>
+    <div class="debug-log">
+      <h3>事件日志</h3>
+      <ol id="debugLogList"></ol>
+    </div>
+  </div>
+</div>
+
+<!-- Mic Test Overlay -->
+<div class="mic-test-overlay" id="micTestOverlay">
+  <div class="mic-test-dialog">
+    <h3>麦克风测试</h3>
+    <div class="volume-meter-outer"><div class="volume-meter-inner" id="volumeBar"></div></div>
+    <div class="volume-peak" id="volumeLabel">音量：--</div>
+    <div class="mic-test-buttons">
+      <button class="btn-primary" id="btnMicTestAction" onclick="toggleMicTestRecording()">开始测试</button>
+      <span class="mic-test-status" id="micTestStatus">点击按钮开始测试麦克风</span>
+    </div>
+    <audio id="micTestAudio" controls></audio>
+    <div style="display:flex;justify-content:flex-end;">
+      <button class="btn-secondary" onclick="closeMicTest()">关闭</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ====================================================================
+// STATE
+// ====================================================================
+let scriptText = '';
+let segments = [];          // [{text, start, end, skippable}]
+let currentSegmentIdx = -1;
+let charIndex = 0;         // matched character position in full text
+let matchedText = '';
+let committedText = '';
+let matchState = 'idle';   // idle | pending | accepted
+let matchScore = 0;
+
+let isListening = false;
+let isScrolling = false;
+let scrollTimer = null;
+let recognition = null;
+let restartCount = 0;
+const MAX_RESTART = 8;
+
+let fontSize = 44;
+let sensitivity = 0.55;    // 0.1-0.9
+let leadChars = 0;
+let focusRatio = 0.38;
+let scrollTarget = 'lead'; // lead | handoff
+let scrollMode = 'voice';  // voice | fixed
+let autoScrollSpeed = 30;  // px/sec
+let isFullscreen = false;
+
+// Debug log
+let debugLogs = [];
+const MAX_DEBUG = 40;
+
+// Mic test state
+let micTestStream = null;
+let micTestCtx = null;
+let micTestAnalyser = null;
+let micTestRecorder = null;
+let micTestChunks = [];
+let micTestActive = false;
+let micTestAnim = null;
+
+// ====================================================================
+// HELPERS
+// ====================================================================
+function addDebug(level, msg) {
+  const t = new Date().toLocaleTimeString('zh-CN', {hour12: false});
+  debugLogs.push({ time: t, level, msg });
+  if (debugLogs.length > MAX_DEBUG) debugLogs.shift();
+  console.log(`[${level}] ${msg}`);
+  renderDebugLog();
+}
+function renderDebugLog() {
+  const ol = document.getElementById('debugLogList');
+  if (!ol) return;
+  ol.innerHTML = debugLogs.map(l =>
+    `<li><strong>${l.time}</strong><span>${l.level}</span><em></em><p>${l.msg}</p></li>`
+  ).join('');
+  ol.scrollTop = ol.scrollHeight;
+}
+
+function $(id) { return document.getElementById(id); }
+
+function updateDebugStats() {
+  $('dbCurrentSeg').textContent = currentSegmentIdx >= 0 ? `#${currentSegmentIdx}` : '—';
+  $('dbCharIndex').textContent = charIndex;
+  $('dbMatchState').textContent = matchState;
+  $('dbMatchScore').textContent = matchScore.toFixed(3);
+  $('dbTranscript').textContent = (matchedText || '').slice(-40);
+  $('dbCommitted').textContent = (committedText || '').slice(-40);
+  $('dbSegCount').textContent = segments.length;
+  $('dbRecState').textContent = isListening ? '监听中' : (isScrolling ? '滚动中' : '空闲');
+}
+
+// ====================================================================
+// SCRIPT MANAGEMENT
+// ====================================================================
+const DEFAULT_SCRIPT = '大家好，今天我们来做一个实时字幕提词器。\n\n它会根据麦克风输入，自动滚动到你正在朗读的位置。\n\n语音跟读模式下，对着麦克风朗读，系统会实时识别你的语音。\n\n当前朗读的句子会高亮为白色并略微靠右，已经读过的内容会变暗。\n\n固定速度模式下，文本会自动向下匀速滚动，无需麦克风。\n\n你可以自由调整字号大小、滚动速度、匹配灵敏度。\n\n适合演讲练习、直播串词、视频录制、会议发言等场景。\n\n祝你使用愉快。';
+
+function parseSegments(text) {
+  const full = (text || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  if (!full.trim()) return [];
+
+  // Split paragraphs by blank lines first (preserves visual paragraph breaks)
+  const paras = full.split(/\n\s*\n/).filter(p => p.trim());
+  const result = [];
+  let pos = 0;
+
+  for (const para of paras) {
+    const trimmed = para.trim();
+    if (!trimmed) continue;
+
+    // Within each paragraph, split into sentences by Chinese/English punctuation:
+    // 。！？；.!?;
+    // We also collapse the whitespace/newlines inside a paragraph to spaces
+    // but keep the punctuation as sentence boundaries.
+    const normPara = trimmed.replace(/\s*\n\s*/g, ' ').replace(/\s+/g, ' ');
+
+    // Use a regex that keeps the delimiter with the previous sentence.
+    // The split lookahead keeps the delimiter at the end of each chunk.
+    const SENT_END = /([。！？；\.\!\?;])/g;
+    const pieces = [];
+    let lastIdx = 0;
+    let m;
+    while ((m = SENT_END.exec(normPara)) !== null) {
+      // Push the chunk up to and including this delimiter
+      pieces.push(normPara.slice(lastIdx, m.index + 1).trim());
+      lastIdx = m.index + 1;
+    }
+    // Remainder (text after the last delimiter, if any)
+    const tail = normPara.slice(lastIdx).trim();
+    if (tail) pieces.push(tail);
+
+    // Fallback: if no delimiters found at all, treat the whole paragraph as one segment
+    if (pieces.length === 0) pieces.push(trimmed);
+
+    for (const piece of pieces) {
+      if (!piece) continue;
+
+      // Extract clean text (strip skippable markers |...|)
+      let cleanText = '';
+      let inSkip = false;
+      for (let i = 0; i < piece.length; i++) {
+        const ch = piece[i];
+        if (ch === '|') { inSkip = !inSkip; continue; }
+        if (!inSkip) cleanText += ch;
+      }
+
+      result.push({
+        text: piece,
+        cleanText: cleanText,
+        start: pos,
+        end: pos + cleanText.length,
+        skippable: piece.includes('|')
+      });
+      pos += cleanText.length;
+    }
+  }
+
+  return result;
+}
+
+function getFullCleanText() {
+  return segments.map(s => s.cleanText).join('');
+}
+
+function renderSegments() {
+  const frame = $('readerFrame');
+  const segCount = segments.length;
+
+  if (segCount === 0) {
+    frame.innerHTML = '<p class="empty-reader">未加载文本。点击左下角"编辑稿件"开始。</p>';
+    return;
+  }
+
+  frame.innerHTML = segments.map((seg, i) => {
+    let cls = '';
+    if (i < currentSegmentIdx) cls = 'is-skippable';
+    else if (i === currentSegmentIdx) cls = 'is-current';
+    if (seg.skippable) cls += (cls ? ' ' : '') + 'reader-segment-selectable';
+    const skipBtn = seg.skippable ? `<br><button class="btn-skip" onclick="skipSegment(${i}, event)">跳过此段</button>` : '';
+    return `<p class="${cls}" data-start="${seg.start}" data-end="${seg.end}" data-index="${i}" ${seg.skippable ? 'tabindex="0"' : ''}>${escapeHTML(seg.text)}${skipBtn}</p>`;
+  }).join('');
+
+  $('drawerSegmentCount').textContent = `${segCount} 段`;
+  $('drawerCharCount').textContent = `${getFullCleanText().length} 字`;
+  $('drawerTitle').textContent = scriptText ? (scriptText.slice(0, 18).replace(/\n/g,' ') || '未命名稿件') : '默认稿件';
+
+  updateDebugStats();
+}
+
+function escapeHTML(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+function loadScript(text) {
+  scriptText = text || DEFAULT_SCRIPT;
+  segments = parseSegments(scriptText);
+  currentSegmentIdx = 0;
+  charIndex = 0;
+  matchedText = '';
+  committedText = '';
+  matchState = 'idle';
+  matchScore = 0;
+  renderSegments();
+  scrollToCurrentSegment();
+  updateLibrarySelect();
+}
+
+// ====================================================================
+// Library (localStorage)
+// ====================================================================
+const LIBRARY_KEY = 'teleprompter.scriptLibrary';
+
+function getLibrary() {
+  try {
+    const raw = localStorage.getItem(LIBRARY_KEY);
+    if (!raw) return [];
+    const arr = JSON.parse(raw);
+    if (!Array.isArray(arr)) return [];
+    return arr.filter(s => typeof s.title === 'string' && typeof s.script === 'string' && typeof s.updatedAt === 'number')
+      .sort((a, b) => b.updatedAt - a.updatedAt);
+  } catch { return []; }
+}
+
+function saveToLibrary(title, script) {
+  const lib = getLibrary();
+  const existing = lib.findIndex(s => s.title === title);
+  if (existing >= 0) lib[existing] = { ...lib[existing], script, updatedAt: Date.now() };
+  else lib.push({ title, script, updatedAt: Date.now() });
+  localStorage.setItem(LIBRARY_KEY, JSON.stringify(lib));
+}
+
+function deleteFromLibrary(title) {
+  let lib = getLibrary();
+  lib = lib.filter(s => s.title !== title);
+  localStorage.setItem(LIBRARY_KEY, JSON.stringify(lib));
+}
+
+function updateLibrarySelect() {
+  const sel = $('librarySelect');
+  const lib = getLibrary();
+  sel.innerHTML = '<option value="">— 已保存的稿件 —</option>' +
+    lib.map(s => `<option value="${s.title.replace(/"/g,'&quot;')}">${s.title} (${new Date(s.updatedAt).toLocaleDateString('zh-CN')})</option>`).join('');
+}
+
+$('librarySelect').addEventListener('change', function() {
+  if (!this.value) return;
+  const lib = getLibrary();
+  const entry = lib.find(s => s.title === this.value);
+  if (entry) {
+    $('editorTextarea').value = entry.script;
+    showNotice(`已加载稿件"${entry.title}"`);
+  }
+});
+
+$('btnLibrarySave').addEventListener('click', function() {
+  const script = $('editorTextarea').value;
+  if (!script.trim()) { showNotice('稿件不能为空'); return; }
+  const title = prompt('输入稿件名称（用于保存和识别）：', script.slice(0, 18).replace(/\n/g, ' ').trim() || '未命名稿件');
+  if (!title) return;
+  saveToLibrary(title, script);
+  updateLibrarySelect();
+  showNotice(`稿件"${title}"已保存`);
+});
+
+$('btnLibraryDelete').addEventListener('click', function() {
+  const sel = $('librarySelect');
+  if (!sel.value) { showNotice('请先选择要删除的稿件'); return; }
+  if (!confirm(`确定删除稿件"${sel.value}"？`)) return;
+  deleteFromLibrary(sel.value);
+  updateLibrarySelect();
+  showNotice('已删除');
+});
+
+$('btnApplyEditor').addEventListener('click', function() {
+  const text = $('editorTextarea').value;
+  if (!text.trim()) { showNotice('请输入文本'); return; }
+  loadScript(text);
+  showNotice('文本已应用');
+  closeDrawer();
+});
+
+// ====================================================================
+// NOTICE
+// ====================================================================
+let noticeTimer = null;
+function showNotice(msg) {
+  const bar = $('noticeBar');
+  bar.textContent = msg;
+  bar.classList.add('visible');
+  if (noticeTimer) clearTimeout(noticeTimer);
+  noticeTimer = setTimeout(() => bar.classList.remove('visible'), 3000);
+}
+
+// ====================================================================
+// DRAWER
+// ====================================================================
+let drawerOpen = false;
+function openDrawer() {
+  drawerOpen = true;
+  $('scriptDrawer').classList.add('open');
+  $('drawerToggle').textContent = '收起';
+  document.querySelector('.app-shell').classList.add('app-shell-script-drawer-open');
+  $('editorTextarea').value = scriptText || DEFAULT_SCRIPT;
+}
+function closeDrawer() {
+  drawerOpen = false;
+  $('scriptDrawer').classList.remove('open');
+  $('drawerToggle').textContent = '编辑稿件';
+  document.querySelector('.app-shell').classList.remove('app-shell-script-drawer-open');
+}
+$('drawerToggle').addEventListener('click', function() {
+  if (drawerOpen) closeDrawer(); else openDrawer();
+});
+
+// ====================================================================
+// HIGHLIGHT & SCROLL ENGINE (character-index based)
+// ====================================================================
+function highlightCharIndex(idx) {
+  // Find which segment contains this character index
+  const fullClean = getFullCleanText();
+  if (idx < 0) idx = 0;
+  if (idx > fullClean.length) idx = fullClean.length;
+
+  let segIdx = segments.findIndex(s => idx >= s.start && idx < s.end);
+  if (segIdx === -1 && segments.length > 0) {
+    segIdx = idx >= (segments[segments.length - 1]?.end || 0) ? segments.length - 1 : 0;
+  }
+
+  if (segIdx === -1) return;
+
+  // Apply lead chars: highlight forward
+  const adjustedIdx = idx + leadChars;
+  let highlightSeg = segIdx;
+  if (leadChars > 0) {
+    highlightSeg = segments.findIndex(s => adjustedIdx >= s.start && adjustedIdx < s.end);
+    if (highlightSeg === -1) highlightSeg = Math.min(segIdx, segments.length - 1);
+  }
+
+  const targetSeg = scrollTarget === 'handoff' ? segIdx : highlightSeg;
+
+  if (targetSeg !== currentSegmentIdx && targetSeg >= 0) {
+    currentSegmentIdx = targetSeg;
+    charIndex = idx;
+    updateHighlight();
+    scrollToCurrentSegment();
+  }
+
+  updateDebugStats();
+}
+
+function updateHighlight() {
+  const paras = $('readerFrame').querySelectorAll('p[data-index]');
+  paras.forEach(p => {
+    const i = parseInt(p.dataset.index);
+    p.classList.remove('is-current', 'is-read', 'is-skippable');
+    p.style.color = '';
+    if (i < currentSegmentIdx) {
+      if (segments[i]?.skippable) p.classList.add('is-skippable');
+      else p.classList.add('is-read');
+    } else if (i === currentSegmentIdx) {
+      p.classList.add('is-current');
+    }
+  });
+}
+
+function scrollToCurrentSegment() {
+  const currentEl = $('readerFrame').querySelector(`p[data-index="${currentSegmentIdx}"]`);
+  if (!currentEl) return;
+  const frame = $('readerFrame');
+  const targetTop = currentEl.offsetTop - frame.clientHeight * focusRatio + currentEl.offsetHeight / 2;
+  frame.scrollTo({ top: Math.max(0, targetTop), behavior: 'smooth' });
+}
+
+// ====================================================================
+// TEXT MATCHING ENGINE
+// ====================================================================
+function normalizeForMatch(text) {
+  return text.replace(/[\s，,。\.！!？?；;：:、""''「」『』（）\(\)【】\[\]《》〈〉\-—…·"'`\/\\|@#$%^&*+=~]/g, '').toLowerCase();
+}
+
+function fuzzyScore(query, target) {
+  const q = normalizeForMatch(query);
+  const t = normalizeForMatch(target);
+  if (!q || !t) return 0;
+
+  // Exact substring match
+  if (t.includes(q) || q.includes(t)) return 1;
+
+  // Character overlap
+  const qSet = new Set(q);
+  const tSet = new Set(t);
+  let overlap = 0;
+  for (const c of qSet) { if (tSet.has(c)) overlap++; }
+
+  const overlapRatio = overlap / Math.max(qSet.size, tSet.size);
+  const lenRatio = Math.min(q.length, t.length) / Math.max(q.length, t.length);
+  return overlapRatio * 0.7 + lenRatio * 0.3;
+}
+
+function findMatchingCharIndex(recognizedText) {
+  const fullClean = getFullCleanText();
+  if (!recognizedText || !fullClean) return -1;
+
+  const normRec = normalizeForMatch(recognizedText);
+  if (normRec.length < 1) return -1;
+
+  // Strategy 1: Find exact substring in full clean text
+  const exactIdx = fullClean.toLowerCase().indexOf(normRec, Math.max(0, charIndex - 20));
+  if (exactIdx >= 0) {
+    matchScore = 1;
+    return exactIdx + normRec.length;
+  }
+
+  // Strategy 2: Search forward from current position in sliding windows
+  const searchStart = Math.max(0, charIndex - 30);
+  const searchEnd = Math.min(fullClean.length, charIndex + 500);
+  const normFull = normalizeForMatch(fullClean.slice(searchStart, searchEnd));
+
+  const subIdx = normFull.indexOf(normRec);
+  if (subIdx >= 0) {
+    // Map back: find where in original text this maps
+    let origPos = searchStart;
+    let normPos = 0;
+    while (normPos < subIdx && origPos < searchEnd) {
+      const c = fullClean[origPos];
+      if (!/[，,。\.！!？?；;：:、""''「」『』（）\(\)【】\[\]《》〈〉\-—…·"'`\/\\|@#$%^&*+=~\s]/.test(c)) normPos++;
+      origPos++;
+    }
+    // Fine: just return the approx position
+    matchScore = 0.9;
+    return searchStart + subIdx + normRec.length;
+  }
+
+  // Strategy 3: Fuzzy match per segment
+  let bestIdx = -1;
+  let bestScore = 0;
+  const lookAhead = 5;
+  for (let i = currentSegmentIdx; i < Math.min(currentSegmentIdx + lookAhead, segments.length); i++) {
+    const score = fuzzyScore(normRec, segments[i].cleanText);
+    if (score > bestScore) { bestScore = score; bestIdx = i; }
+  }
+
+  matchScore = bestScore;
+  if (bestScore < sensitivity) return -1;
+
+  // Return end position of best matching segment
+  return segments[bestIdx]?.end ?? -1;
+}
+
+function processRecognizedText(text, isFinal) {
+  if (!text || !text.trim()) return;
+
+  matchedText = text;
+
+  if (isFinal) {
+    committedText = (committedText + text).slice(-120);
+  }
+
+  const idx = findMatchingCharIndex(text);
+
+  if (idx >= 0 && idx > charIndex) {
+    addDebug('ok', `匹配: "${text.slice(0,30)}" → pos=${idx} score=${matchScore.toFixed(3)}`);
+    highlightCharIndex(idx);
+    updateDebugStats();
+  } else if (idx < 0 && matchScore < sensitivity) {
+    addDebug('log', `无匹配: "${text.slice(0,30)}" score=${matchScore.toFixed(3)}`);
+  }
+}
+
+// ====================================================================
+// SPEECH RECOGNITION
+// ====================================================================
+function setupRecognition() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) {
+    addDebug('warn', 'SpeechRecognition 不可用');
+    showNotice('浏览器不支持语音识别，请使用 Chrome 或 Edge。');
+    return null;
+  }
+
+  const rec = new SR();
+  rec.continuous = true;
+  rec.interimResults = true;
+  rec.lang = 'zh-CN';
+  rec.maxAlternatives = 1;
+
+  rec.onstart = () => {
+    addDebug('ok', '识别已启动');
+    restartCount = 0;
+    updateStatus('listening', '监听中...');
+  };
+
+  rec.onend = () => {
+    addDebug('log', `识别结束 (listening=${isListening})`);
+    if (isListening && restartCount < MAX_RESTART) {
+      restartCount++;
+      addDebug('log', `自动重启 #${restartCount}`);
+      try { rec.start(); } catch(e) {
+        addDebug('warn', `重启失败: ${e.message}`);
+        setTimeout(() => {
+          if (isListening) {
+            try { rec.start(); } catch(e2) {
+              addDebug('warn', `延迟重启也失败: ${e2.message}`);
+              stopListening();
+            }
+          }
+        }, 400);
+      }
+    } else if (!isListening) {
+      updateStatus('idle', '语音跟读模式');
+    }
+  };
+
+  rec.onerror = (e) => {
+    addDebug('warn', `错误: ${e.error} ${e.message || ''}`);
+    if (e.error === 'not-allowed') {
+      stopListening();
+      alert('麦克风权限被拒绝。请在浏览器设置中允许麦克风。');
+    } else if (e.error === 'no-speech') {
+      updateStatus('listening', '等待语音...');
+    } else if (e.error === 'network') {
+      stopListening();
+      showNotice('网络错误，语音识别需要联网');
+    }
+  };
+
+  rec.onresult = (event) => {
+    let finalText = '';
+    let interimText = '';
+
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const t = event.results[i][0].transcript;
+      if (event.results[i].isFinal) finalText += t;
+      else interimText += t;
+    }
+
+    if (finalText) {
+      addDebug('ok', `识别: "${finalText.slice(0,40)}"`);
+      updateStatus('speaking', finalText.slice(0, 20));
+      processRecognizedText(finalText, true);
+    }
+    if (interimText) {
+      updateStatus('speaking', interimText.slice(0, 20));
+      processRecognizedText(interimText, false);
+    }
+  };
+
+  rec.onaudiostart = () => { addDebug('log', '音频开始'); updateStatus('speaking', '检测到语音'); };
+  rec.onaudioend = () => { addDebug('log', '音频结束'); updateStatus('listening', '监听中...'); };
+  rec.onspeechstart = () => addDebug('log', '检测到人声');
+  rec.onspeechend = () => addDebug('log', '人声结束');
+
+  return rec;
+}
+
+// ====================================================================
+// STATUS
+// ====================================================================
+function updateStatus(type, text) {
+  const pill = $('statusPill');
+  const label = $('statusLabel');
+  const value = $('statusValue');
+
+  pill.classList.remove('listening');
+  if (type === 'listening') { label.textContent = text; value.textContent = '监听中'; pill.classList.add('listening'); }
+  else if (type === 'speaking') { label.textContent = '检测到语音'; value.textContent = text || '...'; pill.classList.add('listening'); }
+  else if (type === 'scrolling') { label.textContent = '滚动中'; value.textContent = '自动'; }
+  else { label.textContent = '就绪'; value.textContent = text || '—'; }
+}
+
+// ====================================================================
+// ACTIONS
+// ====================================================================
+function toggleAction() {
+  if (scrollMode === 'voice') toggleMic();
+  else toggleScroll();
+}
+
+function toggleMic() {
+  if (!recognition) {
+    recognition = setupRecognition();
+    if (!recognition) return;
+  }
+
+  if (isListening) {
+    stopListening();
+  } else {
+    startListening();
+  }
+}
+
+function startListening() {
+  if (isScrolling) stopScrolling();
+  isListening = true;
+  restartCount = 0;
+  updateMicButton();
+  updateStatus('listening', '请求麦克风...');
+
+  try {
+    recognition.start();
+    addDebug('ok', 'start() 成功');
+  } catch(e) {
+    addDebug('warn', `start() 失败: ${e.message}`);
+    isListening = false;
+    updateMicButton();
+    updateStatus('idle', `启动失败: ${e.message}`);
+    if (e.message && e.message.includes('not-allowed')) {
+      alert('麦克风权限被拒绝。请在浏览器设置中允许麦克风。');
+    }
+  }
+}
+
+function stopListening() {
+  isListening = false;
+  restartCount = 0;
+  updateMicButton();
+  try { recognition.stop(); } catch(e) {}
+  updateStatus('idle', '语音跟读模式');
+}
+
+function toggleScroll() {
+  if (isScrolling) stopScrolling();
+  else startScrolling();
+}
+
+function startScrolling() {
+  if (isListening) stopListening();
+  isScrolling = true;
+  updateScrollButton();
+  updateStatus('scrolling', '滚动中');
+
+  const pxPerTick = autoScrollSpeed / 30;
+  scrollTimer = setInterval(() => {
+    if (!isScrolling) return;
+    const frame = $('readerFrame');
+    const maxScroll = frame.scrollHeight - frame.clientHeight;
+    if (frame.scrollTop >= maxScroll - 3) {
+      stopScrolling();
+      return;
+    }
+    frame.scrollTop += pxPerTick;
+    updateFixedHighlight();
+  }, 33);
+}
+
+function stopScrolling() {
+  isScrolling = false;
+  if (scrollTimer) { clearInterval(scrollTimer); scrollTimer = null; }
+  updateScrollButton();
+  updateStatus('idle', '固定速度模式');
+}
+
+function updateFixedHighlight() {
+  const frame = $('readerFrame');
+  const centerY = frame.scrollTop + frame.clientHeight * focusRatio;
+  let bestIdx = currentSegmentIdx;
+  let bestDist = Infinity;
+  const paras = frame.querySelectorAll('p[data-index]');
+  paras.forEach(p => {
+    const dist = Math.abs(p.offsetTop - centerY);
+    if (dist < bestDist) { bestDist = dist; bestIdx = parseInt(p.dataset.index); }
+  });
+  if (bestIdx !== currentSegmentIdx && bestIdx >= 0) {
+    currentSegmentIdx = bestIdx;
+    updateHighlight();
+  }
+}
+
+function updateMicButton() {
+  const btn = $('btnAction');
+  btn.textContent = isListening ? '停止麦克风' : '开始麦克风';
+  btn.classList.toggle('recording', isListening);
+  btn.classList.remove('scrolling');
+}
+
+function updateScrollButton() {
+  const btn = $('btnAction');
+  btn.textContent = isScrolling ? '暂停' : '开始滚动';
+  btn.classList.toggle('scrolling', isScrolling);
+  btn.classList.remove('recording');
+}
+
+function resetProgress() {
+  currentSegmentIdx = 0;
+  charIndex = 0;
+  matchedText = '';
+  committedText = '';
+  matchState = 'idle';
+  matchScore = 0;
+  updateHighlight();
+  $('readerFrame').scrollTo({ top: 0, behavior: 'smooth' });
+  addDebug('info', '进度已重置');
+  updateDebugStats();
+}
+
+function prevSegment() {
+  if (currentSegmentIdx > 0) {
+    currentSegmentIdx--;
+    charIndex = segments[currentSegmentIdx]?.start || 0;
+    updateHighlight();
+    scrollToCurrentSegment();
+    updateDebugStats();
+  }
+}
+
+function nextSegment() {
+  if (currentSegmentIdx < segments.length - 1) {
+    currentSegmentIdx++;
+    charIndex = segments[currentSegmentIdx]?.start || 0;
+    updateHighlight();
+    scrollToCurrentSegment();
+    updateDebugStats();
+  }
+}
+
+function skipSegment(idx, evt) {
+  if (evt) evt.stopPropagation();
+  if (idx >= 0 && idx < segments.length) {
+    segments[idx].skippable = false;  // un-mark as skippable after skipping
+    currentSegmentIdx = idx + 1;
+    charIndex = segments[idx]?.end || charIndex;
+    updateHighlight();
+    scrollToCurrentSegment();
+    renderSegments();  // re-render to remove skip button
+    addDebug('info', `跳过段落 #${idx}`);
+  }
+}
+
+// ====================================================================
+// SETTINGS
+// ====================================================================
+function toggleSettings() {
+  $('settingsPopover').classList.toggle('visible');
+}
+
+function onScrollModeChange() {
+  scrollMode = $('scrollModeSelect').value;
+  localStorage.setItem('teleprompter.scrollMode', scrollMode);
+
+  if (scrollMode === 'voice') {
+    if (isScrolling) stopScrolling();
+    updateMicButton();
+    $('leadCharsField').style.display = '';
+    $('speedField').style.display = 'none';
+    $('modeLabel').textContent = '语音跟读';
+    $('scrollModeTag').textContent = '· 跟随';
+  } else {
+    if (isListening) stopListening();
+    updateScrollButton();
+    $('leadCharsField').style.display = 'none';
+    $('speedField').style.display = '';
+    $('modeLabel').textContent = '固定速度';
+    $('scrollModeTag').textContent = '· 自动';
+  }
+}
+
+function onFontSizeChange() {
+  fontSize = parseInt($('fontSizeSlider').value);
+  $('fontSizeOutput').textContent = fontSize;
+  $('readerFrame').style.setProperty('--reader-font-size', fontSize + 'px');
+  localStorage.setItem('teleprompter.fontSize', fontSize);
+}
+
+function onSensitivityChange() {
+  sensitivity = parseInt($('sensitivitySlider').value) / 100;
+  $('sensitivityOutput').textContent = sensitivity.toFixed(2);
+  localStorage.setItem('teleprompter.sensitivity', sensitivity);
+}
+
+function onLeadCharsChange() {
+  leadChars = parseInt($('leadCharsSlider').value);
+  $('leadCharsOutput').textContent = leadChars;
+  localStorage.setItem('teleprompter.leadChars', leadChars);
+}
+
+function onFocusRatioChange() {
+  focusRatio = parseInt($('focusRatioSlider').value) / 100;
+  $('focusRatioOutput').textContent = Math.round(focusRatio * 100) + '%';
+  localStorage.setItem('teleprompter.focusRatio', focusRatio);
+}
+
+function onScrollTargetChange() {
+  scrollTarget = $('scrollTargetSelect').value;
+  localStorage.setItem('teleprompter.scrollTarget', scrollTarget);
+}
+
+function onSpeedChange() {
+  autoScrollSpeed = parseInt($('speedSelect').value);
+  localStorage.setItem('teleprompter.autoScrollSpeed', autoScrollSpeed);
+  if (isScrolling) {
+    clearInterval(scrollTimer);
+    startScrolling();
+  }
+}
+
+function loadSettings() {
+  const sm = localStorage.getItem('teleprompter.scrollMode');
+  if (sm === 'fixed' || sm === 'voice') scrollMode = sm;
+
+  const fs = parseInt(localStorage.getItem('teleprompter.fontSize'));
+  if (fs >= 20 && fs <= 80) fontSize = fs;
+
+  const sens = parseFloat(localStorage.getItem('teleprompter.sensitivity'));
+  if (sens >= 0.1 && sens <= 0.9) sensitivity = sens;
+
+  const lc = parseInt(localStorage.getItem('teleprompter.leadChars'));
+  if (lc >= 0 && lc <= 60) leadChars = lc;
+
+  const fr = parseFloat(localStorage.getItem('teleprompter.focusRatio'));
+  if (fr >= 0.2 && fr <= 0.6) focusRatio = fr;
+
+  const st = localStorage.getItem('teleprompter.scrollTarget');
+  if (st === 'lead' || st === 'handoff') scrollTarget = st;
+
+  const sp = parseInt(localStorage.getItem('teleprompter.autoScrollSpeed'));
+  if (!isNaN(sp)) autoScrollSpeed = sp;
+
+  // Apply to UI
+  $('scrollModeSelect').value = scrollMode;
+  $('fontSizeSlider').value = fontSize;
+  $('fontSizeOutput').textContent = fontSize;
+  $('sensitivitySlider').value = Math.round(sensitivity * 100);
+  $('sensitivityOutput').textContent = sensitivity.toFixed(2);
+  $('leadCharsSlider').value = leadChars;
+  $('leadCharsOutput').textContent = leadChars;
+  $('focusRatioSlider').value = Math.round(focusRatio * 100);
+  $('focusRatioOutput').textContent = Math.round(focusRatio * 100) + '%';
+  $('scrollTargetSelect').value = scrollTarget;
+  $('speedSelect').value = autoScrollSpeed;
+  $('readerFrame').style.setProperty('--reader-font-size', fontSize + 'px');
+
+  onScrollModeChange();  // Update UI visibility
+}
+
+// ====================================================================
+// FULLSCREEN
+// ====================================================================
+function enterFullscreen() {
+  isFullscreen = true;
+  var el = document.documentElement;
+  if (el.requestFullscreen) {
+    el.requestFullscreen().catch(function() {
+      $('appShell').classList.add('fake-fullscreen');
+      $('fullscreenExitBtn').style.display = 'inline-flex';
+    });
+  } else if (el.webkitRequestFullscreen) {
+    el.webkitRequestFullscreen();
+  } else {
+    $('appShell').classList.add('fake-fullscreen');
+    $('fullscreenExitBtn').style.display = 'inline-flex';
+  }
+  $('fullscreenBtn').textContent = '✕';
+  if (drawerOpen) closeDrawer();
+}
+
+function exitFullscreen() {
+  isFullscreen = false;
+  if (document.fullscreenElement) {
+    document.exitFullscreen().catch(function() {});
+  } else if (document.webkitFullscreenElement) {
+    document.webkitExitFullscreen();
+  }
+  $('appShell').classList.remove('fake-fullscreen');
+  $('fullscreenExitBtn').style.display = 'none';
+  $('fullscreenBtn').textContent = '⛶';
+}
+
+function toggleFullscreen() {
+  if (isFullscreen) exitFullscreen();
+  else enterFullscreen();
+}
+
+document.addEventListener('fullscreenchange', function() {
+  if (!document.fullscreenElement && isFullscreen) {
+    isFullscreen = false;
+    $('appShell').classList.remove('fake-fullscreen');
+    $('fullscreenExitBtn').style.display = 'none';
+    $('fullscreenBtn').textContent = '⛶';
+  }
+});
+document.addEventListener('webkitfullscreenchange', function() {
+  if (!document.webkitFullscreenElement && isFullscreen) {
+    isFullscreen = false;
+    $('appShell').classList.remove('fake-fullscreen');
+    $('fullscreenExitBtn').style.display = 'none';
+    $('fullscreenBtn').textContent = '⛶';
+  }
+});
+
+$('fullscreenBtn').addEventListener('click', toggleFullscreen);
+$('fullscreenExitBtn').addEventListener('click', exitFullscreen);
+
+// ====================================================================
+// MIC TEST
+// ====================================================================
+function toggleMicTestUI() {
+  $('micTestOverlay').classList.toggle('visible');
+}
+
+function closeMicTest() {
+  stopMicTestRecording();
+  $('micTestAudio').classList.remove('visible');
+  $('micTestAudio').src = '';
+  $('micTestStatus').textContent = '点击按钮开始测试麦克风';
+  $('micTestOverlay').classList.remove('visible');
+}
+
+async function toggleMicTestRecording() {
+  if (micTestActive) { stopMicTestRecording(); return; }
+  await startMicTestRecording();
+}
+
+async function startMicTestRecording() {
+  try {
+    micTestStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    micTestCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const source = micTestCtx.createMediaStreamSource(micTestStream);
+    micTestAnalyser = micTestCtx.createAnalyser();
+    micTestAnalyser.fftSize = 256;
+    source.connect(micTestAnalyser);
+
+    micTestRecorder = new MediaRecorder(micTestStream);
+    micTestChunks = [];
+    micTestRecorder.ondataavailable = e => { if (e.data.size > 0) micTestChunks.push(e.data); };
+    micTestRecorder.onstop = () => {
+      const blob = new Blob(micTestChunks, { type: 'audio/webm' });
+      const audio = $('micTestAudio');
+      audio.src = URL.createObjectURL(blob);
+      audio.classList.add('visible');
+      $('micTestStatus').textContent = '录音完成，可点击播放回听';
+    };
+
+    micTestRecorder.start();
+    micTestActive = true;
+    $('btnMicTestAction').textContent = '停止测试';
+    $('btnMicTestAction').classList.add('recording');
+    $('micTestStatus').textContent = '正在录音，请对着麦克风说话...';
+    animateMicVolume();
+  } catch(err) {
+    addDebug('warn', `麦克风测试失败: ${err.message}`);
+    alert('无法访问麦克风：' + err.message);
+    $('micTestStatus').textContent = '麦克风访问失败';
+  }
+}
+
+function stopMicTestRecording() {
+  micTestActive = false;
+  if (micTestAnim) { cancelAnimationFrame(micTestAnim); micTestAnim = null; }
+  if (micTestRecorder && micTestRecorder.state !== 'inactive') micTestRecorder.stop();
+  if (micTestStream) { micTestStream.getTracks().forEach(t => t.stop()); micTestStream = null; }
+  if (micTestCtx && micTestCtx.state !== 'closed') { micTestCtx.close(); micTestCtx = null; }
+  $('btnMicTestAction').textContent = '开始测试';
+  $('btnMicTestAction').classList.remove('recording');
+  $('volumeBar').style.width = '0%';
+  $('volumeLabel').textContent = '音量：--';
+  if (!$('micTestOverlay').classList.contains('visible')) {
+    $('micTestStatus').textContent = '点击按钮开始测试麦克风';
+  }
+}
+
+function animateMicVolume() {
+  if (!micTestActive || !micTestAnalyser) return;
+  const data = new Uint8Array(micTestAnalyser.frequencyBinCount);
+  micTestAnalyser.getByteFrequencyData(data);
+  let sum = 0;
+  for (let i = 0; i < data.length; i++) sum += data[i];
+  const avg = sum / data.length;
+  const pct = Math.min(100, (avg / 128) * 100);
+  $('volumeBar').style.width = pct + '%';
+  $('volumeLabel').textContent = `音量：${pct < 10 ? '低' : pct < 40 ? '中' : '高'} (${Math.round(pct)}%)`;
+  micTestAnim = requestAnimationFrame(animateMicVolume);
+}
+
+// ====================================================================
+// DEBUG
+// ====================================================================
+$('debugToggle').addEventListener('click', () => {
+  $('debugPanel').classList.toggle('visible');
+  updateDebugStats();
+});
+
+// ====================================================================
+// KEYBOARD SHORTCUTS
+// ====================================================================
+document.addEventListener('keydown', function(e) {
+  if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+
+  switch(e.key) {
+    case ' ':
+      e.preventDefault();
+      toggleAction();
+      break;
+    case 'ArrowRight':
+      e.preventDefault();
+      nextSegment();
+      break;
+    case 'ArrowLeft':
+      e.preventDefault();
+      prevSegment();
+      break;
+    case 'r': case 'R':
+      if (!e.ctrlKey && !e.metaKey) resetProgress();
+      break;
+    case 'f': case 'F':
+      if (!e.ctrlKey && !e.metaKey) { e.preventDefault(); toggleFullscreen(); }
+      break;
+    case 'e': case 'E':
+      if (!e.ctrlKey && !e.metaKey) { e.preventDefault(); if (drawerOpen) closeDrawer(); else openDrawer(); }
+      break;
+    case 'Escape':
+      if (isFullscreen) { exitFullscreen(); break; }
+      if (isListening) stopListening();
+      if (isScrolling) stopScrolling();
+      break;
+  }
+});
+
+// ====================================================================
+// INIT
+// ====================================================================
+function init() {
+  addDebug('info', '===== 提词器 v2.0 初始化 =====');
+  const hasAPI = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+  addDebug(hasAPI ? 'ok' : 'warn', `SpeechRecognition: ${hasAPI ? '可用' : '不可用'}`);
+
+  loadSettings();
+  loadScript(DEFAULT_SCRIPT);
+  updateLibrarySelect();
+
+  recognition = setupRecognition();
+
+  addDebug('ok', '初始化完成');
+  updateDebugStats();
+}
+
+init();
+</script>
+</body>
+</html>
